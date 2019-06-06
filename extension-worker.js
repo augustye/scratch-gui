@@ -126,6 +126,7 @@ function () {
 
     this.nextExtensionId = 0;
     this.initialRegistrations = [];
+    this.extensionURL = null;
     dispatch.waitForConnection.then(function () {
       dispatch.call('extensions', 'allocateWorker').then(function (x) {
         var _x = _slicedToArray(x, 2),
@@ -133,7 +134,16 @@ function () {
             extension = _x[1];
 
         _this.workerId = id;
-        _this.extensionURL = extension;
+        console.log('[mlforkids] ExtensionWorker ' + extension);
+
+        if (extension.indexOf('http') === 0) {
+          console.log('[mlforkids] Extension from remote URL : ' + extension);
+          _this.extensionURL = extension;
+        } else {
+          console.log('[mlforkids] Skipping built-in extension : ' + extension);
+          _this.extensionURL = extension;
+          return dispatch.call('extensions', 'onWorkerInit', id);
+        }
 
         try {
           importScripts(extension);
@@ -814,6 +824,8 @@ function _defineProperties(target, props) { for (var i = 0; i < props.length; i+
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
 
 var log = __webpack_require__(/*! ../util/log */ "./node_modules/scratch-vm/src/util/log.js");
+
+var mlforkidsSound = __webpack_require__(/*! ../mlforkids-components/sound */ "./node_modules/scratch-vm/src/mlforkids-components/sound/index.js");
 /**
  * @typedef {object} DispatchCallMessage - a message to the dispatch system representing a service method call
  * @property {*} responseId - send a response message with this response ID. See {@link DispatchResponseMessage}
@@ -1063,6 +1075,19 @@ function () {
           promise = this._onDispatchMessage(worker, message);
         } else {
           promise = this.call.apply(this, [message.service, message.method].concat(_toConsumableArray(message.args)));
+        }
+      } else if (message.mlforkids) {
+        console.log('[mlforkids] Handling message from ML for Kids extension running in a web worker');
+        window.dispatchEvent(new Event(message.mlforkids));
+      } else if (message.mlforkidssound) {
+        if (message.mlforkidssound.command === 'init') {
+          this.mlforkidsSoundSupport = new mlforkidsSound(message.mlforkidssound.data);
+        } else if (message.mlforkidssound.command === 'train') {
+          this.mlforkidsSoundSupport.trainNewModel(message.mlforkidssound.data, worker);
+        } else if (message.mlforkidssound.command === 'listen') {
+          this.mlforkidsSoundSupport.startListening(worker);
+        } else if (message.mlforkidssound.command === 'stoplisten') {
+          this.mlforkidsSoundSupport.stopListening();
         }
       } else if (typeof message.responseId === 'undefined') {
         log.error("Dispatch caught malformed message from a worker: ".concat(JSON.stringify(event)));
@@ -1365,6 +1390,11 @@ var BlockType = {
   BOOLEAN: 'Boolean',
 
   /**
+   * A button (not an actual block) for some special action, like making a variable
+   */
+  BUTTON: 'button',
+
+  /**
    * Command block
    */
   COMMAND: 'command',
@@ -1424,6 +1454,162 @@ var TargetType = {
   STAGE: 'stage'
 };
 module.exports = TargetType;
+
+/***/ }),
+
+/***/ "./node_modules/scratch-vm/src/mlforkids-components/sound/index.js":
+/*!*************************************************************************!*\
+  !*** ./node_modules/scratch-vm/src/mlforkids-components/sound/index.js ***!
+  \*************************************************************************/
+/*! no static exports found */
+/***/ (function(module, exports) {
+
+function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+
+function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+
+var ML4KidsSoundTraining =
+/*#__PURE__*/
+function () {
+  // states:
+  //   INIT - not ready yet
+  //   READY - ready for training
+  //   TRAINING - training in progress
+  //   TRAINED - ML model ready for use
+  //   LISTENING - ML model being used
+  //   ERROR - something went wrong
+  function ML4KidsSoundTraining(projectid) {
+    _classCallCheck(this, ML4KidsSoundTraining);
+
+    this.state = 'INIT';
+    var that = this;
+    var baseRecognizer = speechCommands.create('BROWSER_FFT');
+    baseRecognizer.ensureModelLoaded().then(function () {
+      that.transferRecognizer = baseRecognizer.createTransfer(projectid);
+      var modelInfo = that.transferRecognizer.modelInputShape();
+      that.transferModelInfo = {
+        numFrames: modelInfo[1],
+        fftSize: modelInfo[2]
+      };
+      that.state = 'READY';
+    }).catch(function (err) {
+      console.log('[mlforkids] ML4KidsSoundTraining failed init');
+      console.log(err);
+      that.state = 'ERROR';
+    });
+  }
+
+  _createClass(ML4KidsSoundTraining, [{
+    key: "trainNewModel",
+    value: function trainNewModel(data, worker) {
+      if (this.state === 'LISTENING') {
+        this.stopListening();
+      }
+
+      if (this.state !== 'READY' && this.state !== 'TRAINED') {
+        console.log('[mlforkids] ML4KidsSoundTraining not ready to train a new ML model - state : ' + this.state);
+        return;
+      }
+
+      this.state = 'TRAINING';
+      this.transferRecognizer.dataset.clear();
+      this.transferRecognizer.dataset.label2Ids = {};
+      this.transferRecognizer.words = null;
+
+      for (var i = 0; i < data.length; i++) {
+        var trainingdataitem = data[i];
+        this.transferRecognizer.dataset.addExample({
+          label: trainingdataitem.label,
+          spectrogram: {
+            frameSize: this.transferModelInfo.fftSize,
+            data: new Float32Array(trainingdataitem.audiodata)
+          }
+        });
+      }
+
+      this.transferRecognizer.collateTransferWords();
+      var that = this;
+      return tf.nextFrame().then(function () {
+        return that.transferRecognizer.train({
+          epochs: 100
+        });
+      }).then(function () {
+        that.state = 'TRAINED';
+        worker.postMessage({
+          mlforkidssound: 'modelready'
+        });
+      }).catch(function (err) {
+        that.state = 'ERROR';
+        worker.postMessage({
+          mlforkidssound: 'modelfailed'
+        });
+        console.log('[mlforkids] ML4KidsSoundTraining model training failed');
+        console.log(err);
+      });
+    }
+  }, {
+    key: "startListening",
+    value: function startListening(worker) {
+      if (this.state !== 'TRAINED') {
+        console.log('[mlforkids] ML4KidsSoundTraining not ready to listen - state : ' + this.state);
+        return;
+      }
+
+      try {
+        var that = this;
+        this.transferRecognizer.listen(function (result) {
+          var matches = [];
+          var labels = that.transferRecognizer.wordLabels();
+
+          for (var i = 0; i < result.scores.length; i++) {
+            matches.push({
+              class_name: labels[i],
+              confidence: result.scores[i] * 100
+            });
+          }
+
+          matches.sort(function (a, b) {
+            return b.confidence - a.confidence;
+          });
+          worker.postMessage({
+            mlforkidssound: 'recognized',
+            data: matches
+          });
+        }, {
+          probabilityThreshold: 0.70
+        });
+        this.state = 'LISTENING';
+      } catch (err) {
+        this.state = 'ERROR';
+        console.log('[mlforkids] ML4KidsSoundTraining failed to start listening');
+        console.log(err);
+      }
+    }
+  }, {
+    key: "stopListening",
+    value: function stopListening() {
+      if (this.state !== 'LISTENING') {
+        console.log('[mlforkids] ML4KidsSoundTraining not listening - state : ' + this.state);
+        return;
+      }
+
+      try {
+        this.transferRecognizer.stopListening();
+        this.state = 'TRAINED';
+      } catch (err) {
+        this.state = 'ERROR';
+        console.log('[mlforkids] ML4KidsSoundTraining failed to start listening');
+        console.log(err);
+      }
+    }
+  }]);
+
+  return ML4KidsSoundTraining;
+}();
+
+module.exports = ML4KidsSoundTraining;
 
 /***/ }),
 

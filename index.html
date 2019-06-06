@@ -9,5 +9,22 @@
     
   </head>
   <body>
-  <script type="text/javascript" src="lib.min.js"></script><script type="text/javascript" src="gui.js"></script></body>
+    <div id="scratch-mlforkids-help-recognise-image-costume"
+         style="padding: 2em; display: none; font-size: 1.4em; border: thin #4d97ff solid;">
+        <div>It looks like you might need some help with the 'recognise image' block.</div>
+        <div><a id="mlforkids-display-costume-help" target="_blank"
+                style="cursor: pointer; color: #4d97ff">Click here</a>
+              for a description of how to use the block.</div>
+    </div>
+    <div id="scratch-mlforkids-help-no-machine-learning-model"
+         style="padding: 2em; display: none; font-size: 1.4em; border: thin #4d97ff solid;">
+        <div>It looks like you don't have a machine learning model.</div>
+        <div><a id="mlforkids-display-nomodel-help" target="_blank"
+                style="cursor: pointer; color: #4d97ff">Click here</a>
+              for more information about how to fix this.</div>
+    </div>
+
+    <script src="https://unpkg.com/@tensorflow/tfjs@1.0.2/dist/tf.js"></script>
+    <script src="https://unpkg.com/@tensorflow-models/speech-commands@0.3.0"></script>
+  <script type="text/javascript" src="lib.min.js"></script><script type="text/javascript" src="chunks/gui.js"></script></body>
 </html>
